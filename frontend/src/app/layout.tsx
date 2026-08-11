@@ -8,6 +8,7 @@ import {
 } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import Link from "next/link";
 
 const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 const hasValidClerkKey = Boolean(
@@ -25,7 +26,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rezero",
+  title: "RE:ZERO",
   description: "Next.js + FastAPI starter app",
 };
 
@@ -40,9 +41,9 @@ export default function RootLayout({
       <body className="min-h-full bg-background text-foreground">
         <header className="border-b bg-background/80 backdrop-blur">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-            <a href="/" className="text-lg font-semibold">
-              Rezero
-            </a>
+            <Link href="/" className="text-lg font-semibold">
+              RE:ZERO
+            </Link>
             <div>
               {hasValidClerkKey ? (
                 <>
