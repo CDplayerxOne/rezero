@@ -5,3 +5,6 @@ psycopg[binary]
 alembic
 python-dotenv
 pydantic-settings
+httpx
+clerk-backend-api
+svix

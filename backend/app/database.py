@@ -2,6 +2,9 @@ import os
 from sqlmodel import SQLModel, create_engine, Session
 from fastapi import Depends
 from typing import Annotated
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",

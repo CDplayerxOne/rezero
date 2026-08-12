@@ -1,10 +1,16 @@
+import os
 from typing import Annotated
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import Depends, FastAPI, Query, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from .auth import get_authorization_user_id, get_current_user
 from .database import create_db_and_tables, SessionDep
 from contextlib import asynccontextmanager
-from models import Workspace, User
+from .models import Workspace, WorkspaceCreate, User, UserCreate
 from sqlmodel import select
+from svix.webhooks import Webhook, WebhookVerificationError
+from .auth import clerk, CLERK_SIGNING_SECRET
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -24,9 +30,9 @@ app.add_middleware(
 
 @app.get("/workspaces", response_model=list[Workspace])
 def get_workspaces(
-    session: SessionDep,
-    offset: int = 0,
-    limit: Annotated[int, Query(le=100)] = 100,
+    session: SessionDep, # Dependency injection for the database session
+    offset: int = 0, # Query parameter
+    limit: Annotated[int, Query(le=100)] = 100, # Query parameter with a maximum value of 100
 ):
     # Query the database for workspaces with pagination
     workspaces = session.exec(select(Workspace).offset(offset).limit(limit)).all()
@@ -35,7 +41,7 @@ def get_workspaces(
 @app.get("/workspaces/{workspace_id}", response_model=Workspace)
 def get_workspace(
     session: SessionDep,
-    workspace_id: int,
+    workspace_id: int, # path paremeter for the workspace ID
 ):
     # Query the database for a specific workspace
     workspace = session.get(Workspace, workspace_id)
@@ -46,10 +52,16 @@ def get_workspace(
 @app.post("/workspaces", response_model=Workspace)
 def create_workspace(
     session: SessionDep,
-    workspace: Workspace,
+    workspace: WorkspaceCreate,
+    user_id: Annotated[int, Depends(get_authorization_user_id)]
 ):
     # Create a new workspace in the database
-    db_workspace = Workspace.model_validate(workspace)
+    workspace_db = Workspace(
+        user_id=user_id,
+        name=workspace.name,
+    )
+
+    db_workspace = Workspace.model_validate(workspace_db)
     session.add(db_workspace)
     session.commit()
     session.refresh(db_workspace)
@@ -59,9 +71,13 @@ def create_workspace(
 def delete_workspace(
     session: SessionDep,
     workspace_id: int,
+    user_id: Annotated[int, Depends(get_authorization_user_id)]
 ):
     # Delete a specific workspace from the database
     workspace = session.get(Workspace, workspace_id)
+    if workspace and workspace.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this workspace")
+    
     if not workspace:
         raise HTTPException(status_code=404, detail="Workspace not found")
     session.delete(workspace)
@@ -73,9 +89,14 @@ def update_workspace(
     session: SessionDep,
     workspace_id: int,
     workspace: Workspace,
+    user_id: Annotated[int, Depends(get_authorization_user_id)]
 ):
     # Update a specific workspace in the database
     db_workspace = session.get(Workspace, workspace_id)
+
+    if db_workspace and db_workspace.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this workspace")
+
     if not db_workspace:
         raise HTTPException(status_code=404, detail="Workspace not found")
     # converts to a dictionary 
@@ -88,6 +109,101 @@ def update_workspace(
     session.refresh(db_workspace)
     return db_workspace
 
+@app.post("/users", response_model=User)
+async def create_user(
+    session: SessionDep,
+    request: Request,
+):
+    if not CLERK_SIGNING_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Signing secret missing from server environment variables."
+        )
+
+    # Extract the required Svix headers
+    headers = request.headers
+    svix_id = headers.get("svix-id")
+    svix_timestamp = headers.get("svix-timestamp")
+    svix_signature = headers.get("svix-signature")
+
+    # Reject if headers are missing
+    if not all([svix_id, svix_timestamp, svix_signature]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required Svix cryptographic headers."
+        )
+
+    # Get the raw text payload from the request body
+    body_bytes = await request.body()
+    body_str = body_bytes.decode("utf-8")
+
+    # Verify the webhook signature using Svix's Webhook class
+    try:
+        wh = Webhook(CLERK_SIGNING_SECRET)
+        # Returns the parsed payload as a dictionary if successful
+        payload = wh.verify(body_str, {
+            "svix-id": svix_id,
+            "svix-timestamp": svix_timestamp,
+            "svix-signature": svix_signature
+        }) # type: ignore
+    except WebhookVerificationError as e:
+        print(f"Verification failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid webhook signature payload."
+        )
+
+    # Extract data and process the event type
+    event_type = payload.get("type")
+    event_data = payload.get("data", {})
+
+    if event_type == "user.created":
+        clerk_id = event_data.get("id")
+        # gets primary email address from the event data, if it exists, and falls back to the first email address in the list if not
+        primary_email_id = event_data.get("primary_email_address_id")
+        email_addresses = event_data.get("email_addresses") or []
+        email = None
+
+        for email_address in email_addresses:
+            if email_address.get("id") == primary_email_id:
+                email = email_address.get("email_address")
+                break
+
+        if email is None and email_addresses:
+            email = email_addresses[0].get("email_address")
+
+        username = event_data.get("username")
+
+        if not isinstance(email, str) or not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Clerk webhook payload did not include a valid email address.",
+            )
+
+         # Create a new user in the database
+        try:
+            user_db = User(
+                clerk_id=clerk_id,
+                email=email,
+                username=username,
+            )
+
+            session.add(user_db)
+            session.commit()
+            session.refresh(user_db)
+            return user_db
+        except Exception as e:
+            print(f"Error creating user: {e}. Deleting user from Clerk")
+            try:
+                # Delete the user from Clerk if database insertion fails
+                clerk.users.delete(user_id=clerk_id)
+            except Exception as delete_error:
+                print(f"Error deleting user from Clerk: {delete_error}")
+                
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error creating user."
+            )
 
 
 @app.get("/health")
