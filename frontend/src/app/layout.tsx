@@ -1,14 +1,8 @@
 import type { Metadata } from "next";
-import {
-  ClerkProvider,
-  SignedIn,
-  SignedOut,
-  SignInButton,
-  UserButton,
-} from "@clerk/nextjs";
+import { ClerkProvider } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Link from "next/link";
+import Header from "@/components/Header";
 
 const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 const hasValidClerkKey = Boolean(
@@ -39,29 +33,8 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-background text-foreground">
-        <header className="border-b bg-background/80 backdrop-blur">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-            <Link href="/" className="text-lg font-semibold">
-              RE:ZERO
-            </Link>
-            <div>
-              {hasValidClerkKey ? (
-                <>
-                  <SignedOut>
-                    <SignInButton />
-                  </SignedOut>
-                  <SignedIn>
-                    <UserButton afterSignOutUrl="/" />
-                  </SignedIn>
-                </>
-              ) : (
-                <span className="text-sm text-muted-foreground">
-                  Set Clerk env vars to enable auth
-                </span>
-              )}
-            </div>
-          </div>
-        </header>
+        {/* Header is a client component that hides itself on /workspace routes */}
+        <Header />
         {children}
       </body>
     </html>
@@ -72,6 +45,8 @@ export default function RootLayout({
   }
 
   return (
-    <ClerkProvider publishableKey={publishableKey!}>{shell}</ClerkProvider>
+    <ClerkProvider publishableKey={publishableKey!} afterSignOutUrl="/">
+      {shell}
+    </ClerkProvider>
   );
 }

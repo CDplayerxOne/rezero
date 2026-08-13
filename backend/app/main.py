@@ -1,11 +1,10 @@
-import os
 from typing import Annotated
 from fastapi import Depends, FastAPI, Query, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
-from .auth import get_authorization_user_id, get_current_user
+from .auth import get_current_user_id 
 from .database import create_db_and_tables, SessionDep
 from contextlib import asynccontextmanager
-from .models import Workspace, WorkspaceCreate, User, UserCreate
+from .models import Workspace, WorkspaceCreate, User 
 from sqlmodel import select
 from svix.webhooks import Webhook, WebhookVerificationError
 from .auth import clerk, CLERK_SIGNING_SECRET
@@ -31,20 +30,25 @@ app.add_middleware(
 @app.get("/workspaces", response_model=list[Workspace])
 def get_workspaces(
     session: SessionDep, # Dependency injection for the database session
+    user_id: Annotated[int, Depends(get_current_user_id)], # Dependency injection for the user ID
     offset: int = 0, # Query parameter
     limit: Annotated[int, Query(le=100)] = 100, # Query parameter with a maximum value of 100
 ):
     # Query the database for workspaces with pagination
-    workspaces = session.exec(select(Workspace).offset(offset).limit(limit)).all()
+    workspaces = session.exec(select(Workspace).where(Workspace.user_id == user_id).offset(offset).limit(limit)).all()
     return workspaces
 
 @app.get("/workspaces/{workspace_id}", response_model=Workspace)
 def get_workspace(
     session: SessionDep,
-    workspace_id: int, # path paremeter for the workspace ID
+    workspace_id: str, # path paremeter for the workspace ID
+    user_id: Annotated[int, Depends(get_current_user_id)]
 ):
     # Query the database for a specific workspace
-    workspace = session.get(Workspace, workspace_id)
+    workspace = session.exec(select(Workspace).where(Workspace.public_id == workspace_id)).first()
+    if workspace and workspace.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to access this workspace")
+    
     if not workspace:
         raise HTTPException(status_code=404, detail="Workspace not found")
     return workspace
@@ -53,25 +57,28 @@ def get_workspace(
 def create_workspace(
     session: SessionDep,
     workspace: WorkspaceCreate,
-    user_id: Annotated[int, Depends(get_authorization_user_id)]
+    user_id: Annotated[int, Depends(get_current_user_id)]
 ):
     # Create a new workspace in the database
+    print("user_id:", user_id)
     workspace_db = Workspace(
         user_id=user_id,
         name=workspace.name,
     )
 
-    db_workspace = Workspace.model_validate(workspace_db)
-    session.add(db_workspace)
+    print(workspace_db, "workspace_db")
+
+    print(workspace_db, "db_workspace")
+    session.add(workspace_db)
     session.commit()
-    session.refresh(db_workspace)
-    return db_workspace
+    session.refresh(workspace_db)
+    return workspace_db
 
 @app.delete("/workspaces/{workspace_id}", response_model=Workspace)
 def delete_workspace(
     session: SessionDep,
     workspace_id: int,
-    user_id: Annotated[int, Depends(get_authorization_user_id)]
+    user_id: Annotated[int, Depends(get_current_user_id)]
 ):
     # Delete a specific workspace from the database
     workspace = session.get(Workspace, workspace_id)
@@ -89,7 +96,7 @@ def update_workspace(
     session: SessionDep,
     workspace_id: int,
     workspace: Workspace,
-    user_id: Annotated[int, Depends(get_authorization_user_id)]
+    user_id: Annotated[int, Depends(get_current_user_id)]
 ):
     # Update a specific workspace in the database
     db_workspace = session.get(Workspace, workspace_id)

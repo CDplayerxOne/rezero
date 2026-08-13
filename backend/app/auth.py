@@ -13,22 +13,22 @@ clerk = Clerk(
 CLERK_SIGNING_SECRET = os.environ.get("CLERK_SIGNING_SECRET")
 
 
-def get_current_user(request: Request) -> str:
+def get_current_user_clerk(request: Request) -> str:
     try:
         request_state = clerk.authenticate_request(
             request,
             AuthenticateRequestOptions(
-            authorized_parties=['https://example.com']
+            authorized_parties=['http://localhost:3000']
             )
         )
 
-        if not request_state.payload or "userId" not in request_state.payload:
+        if not request_state.payload or "sub" not in request_state.payload:
             raise HTTPException(
                 status_code=401,
                 detail="Not authenticated"
             )
 
-        return request_state.payload["userId"] # type: ignore
+        return request_state.payload["sub"] # type: ignore
 
     except Exception:
         raise HTTPException(
@@ -37,23 +37,25 @@ def get_current_user(request: Request) -> str:
         )
 
 # returns the user id based on the identity column in the database, which is an integer
-def get_authorization_user_id(request: Request) -> int | None:
+def get_current_user_id(request: Request) -> int | None:
     try:
         request_state = clerk.authenticate_request(
             request,
             AuthenticateRequestOptions(
-            authorized_parties=['https://example.com']
+            authorized_parties=['http://localhost:3000']
             )
         )
+        print("Request state:", request_state)
 
-        if not request_state.payload or "userId" not in request_state.payload:
+        if not request_state.payload or "sub" not in request_state.payload:
+            print("No userId found in request payload")
             raise HTTPException(
                 status_code=401,
                 detail="Not authenticated"
             )
 
         with Session(engine) as session:
-            user = session.exec(select(User).where(User.clerk_id == request_state.payload["userId"])).first() 
+            user = session.exec(select(User).where(User.clerk_id == request_state.payload["sub"])).first() 
             if not user:
                 raise HTTPException(
                     status_code=404,

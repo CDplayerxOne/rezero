@@ -34,7 +34,7 @@ class Workspace(WorkspaceBase, table=True):
     id: int | None = Field(default=None, primary_key=True, index=True)
     public_id: uuid.UUID | None = Field(default_factory=uuid.uuid4, unique=True, index=True)
     user_id: int = Field(foreign_key="user.id", index=True)
-    name: str = Field(default=None, index=True)
+    name: str  = Field(index=True)
     created_at: str | None = Field(default_factory=lambda: datetime.now().isoformat(), index=True)
     updated_at: str | None = Field(default_factory=lambda: datetime.now().isoformat(), index=True)
     user: User = Relationship(back_populates="workspaces")
