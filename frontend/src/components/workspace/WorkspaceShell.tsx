@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -12,6 +12,16 @@ import {
   useUser,
 } from "@clerk/nextjs";
 import Link from "next/link";
+import {
+  ChevronDown,
+  ChevronUp,
+  Files,
+  MessageCircleMore,
+  Paperclip,
+  SendHorizontal,
+} from "lucide-react";
+import { useOutsideClick } from "@/hooks/useOutsideClick";
+
 const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 const hasValidClerkKey = Boolean(
   publishableKey && !publishableKey.includes("your_clerk"),
@@ -33,6 +43,7 @@ export default function WorkspaceShell({
     "chat",
   );
   const { user } = useUser();
+  const modalRef = useOutsideClick(() => setShowModal(false));
 
   // placeholder workspaces
   const workspaces: WorkspaceItem[] = [
@@ -47,8 +58,8 @@ export default function WorkspaceShell({
   }
 
   return (
-    <div className="flex h-screen w-screen">
-      <aside className="w-64 border-r p-4 flex flex-col">
+    <div className="flex h-screen w-screen font-sans">
+      <aside className="w-64 p-4 flex flex-col border-r border-stone-300 bg-stone-50">
         <div className="mb-4 flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2 m-4">
             <Link href="/" className="text-lg font-semibold">
@@ -56,15 +67,22 @@ export default function WorkspaceShell({
             </Link>
           </div>
           <div className="relative">
-            <Button variant="ghost" onClick={() => setShowModal(true)}>
+            <Button
+              variant="ghost"
+              onClick={() => setShowModal(true)}
+              className="hover:bg-stone-200 hover:cursor-pointer"
+            >
               <div className="flex items-center gap-2">
                 <span className="font-semibold">{name ?? "Workspace"}</span>
-                <span className="text-sm text-muted-foreground">▼</span>
+                {showModal ? <ChevronUp /> : <ChevronDown />}
               </div>
             </Button>
 
             {showModal ? (
-              <div className="absolute left-0 top-12 z-50 w-72 rounded border bg-background p-4 shadow">
+              <div
+                ref={modalRef}
+                className="absolute left-0 top-12 z-50 w-72 rounded border bg-background p-4 shadow"
+              >
                 <div className="flex flex-col gap-2">
                   {workspaces.map((w) => (
                     <button
@@ -89,32 +107,45 @@ export default function WorkspaceShell({
           </div>
         </div>
 
-        <nav className="flex flex-col gap-2 grow">
+        <nav className="flex flex-col gap-2">
           <button
-            className={`w-full rounded px-3 py-2 text-left ${activeTab === "chat" ? "bg-accent" : "hover:bg-accent"}`}
+            className={`w-full flex gap-2 hover:cursor-pointer rounded-lg px-3 py-2 text-left ${activeTab === "chat" ? "bg-stone-200 text-blue-500 font-bold" : "hover:bg-stone-200"}`}
             onClick={() => setActiveTab("chat")}
           >
-            Chat
+            <MessageCircleMore
+              className={`${activeTab === "chat" && "text-blue-500"}`}
+            />
+            New Chat
           </button>
           <button
-            className={`w-full rounded px-3 py-2 text-left ${activeTab === "files" ? "bg-accent" : "hover:bg-accent"}`}
+            className={`w-full flex gap-2 hover:cursor-pointer rounded-lg px-3 py-2 text-left ${activeTab === "files" ? "bg-stone-200 text-blue-500 font-bold" : "hover:bg-stone-200"}`}
             onClick={() => setActiveTab("files")}
           >
+            <Files className={`${activeTab === "files" && "text-blue-500"}`} />
             Files
           </button>
           <button
-            className={`w-full rounded px-3 py-2 text-left ${activeTab === "clips" ? "bg-accent" : "hover:bg-accent"}`}
+            className={`w-full flex gap-2 hover:cursor-pointer rounded-lg px-3 py-2 text-left ${activeTab === "clips" ? "bg-stone-200 text-blue-500 font-bold" : "hover:bg-stone-200"}`}
             onClick={() => setActiveTab("clips")}
           >
+            <Paperclip
+              className={`${activeTab === "clips" && "text-blue-500"}`}
+            />
             Clips
           </button>
         </nav>
-        <div className="flex items-center gap-2 w-full">
-          {user && (
-            <span className="text-sm text-muted-foreground">
-              {user.firstName} {user.lastName}
-            </span>
-          )}
+        <div className="grow mt-4 overflow-y-auto">
+          <h2 className="font-semibold m-2">Recent Chats</h2>
+          {[1, 2, 3].map((n) => (
+            <div
+              key={n}
+              className="hover:bg-stone-200 rounded-lg p-2 pl-4 hover:cursor-pointer"
+            >
+              Chat {n}
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-center gap-4 w-full py-2">
           {hasValidClerkKey && (
             <>
               <SignedOut>
@@ -125,42 +156,39 @@ export default function WorkspaceShell({
               </SignedIn>
             </>
           )}
+          {user && (
+            <span className="text-md font-bold text-muted-foreground">
+              {user.firstName} {user.lastName}
+            </span>
+          )}
         </div>
       </aside>
 
       <main className="flex-1 p-6">
         {activeTab === "chat" && (
-          <div className="flex h-full flex-col gap-4">
-            <Card className="flex-1">
-              <CardHeader>
-                <CardTitle>Chat</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex h-80 flex-col items-stretch justify-end gap-2">
-                  <div className="h-full w-full overflow-auto rounded border bg-muted p-4" />
-                  <div className="flex gap-2">
-                    <input
-                      className="flex-1 rounded border px-3 py-2"
-                      placeholder="Type a message (UI only)"
-                    />
-                    <Button size="sm">Send</Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          <div className="flex h-full justify-center">
+            <div className="flex h-full lg:w-2/3 flex-col gap-4">
+              <div className="grow"></div>
+              <div className="flex justify-center gap-2">
+                <input
+                  className="flex-1 rounded-3xl border px-3 py-2 mb-2 shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-2xl"
+                  placeholder="What's on your mind?"
+                />
+                <button className="rounded-3xl flex gap-2 bg-blue-500 px-4 py-2 mb-2 text-white shadow-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <SendHorizontal />
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
         {activeTab === "files" && (
           <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Files</h2>
-              <div className="flex items-center gap-2">
-                <label className="cursor-pointer">
-                  <input type="file" className="hidden" />
-                  <Button size="sm">Upload</Button>
-                </label>
-              </div>
+            <div className="">
+              <h2 className="text-lg font-semibold m-2">Files</h2>
+              <button className="rounded-3xl bg-stone-200 px-4 py-2 text-sm font-medium text-stone-700 shadow-md hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                Upload
+              </button>
             </div>
 
             <div className="grid grid-cols-3 gap-4">
