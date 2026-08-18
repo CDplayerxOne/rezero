@@ -21,6 +21,7 @@ import {
   SendHorizontal,
 } from "lucide-react";
 import { useOutsideClick } from "@/hooks/useOutsideClick";
+import FilesTab from "../files/FilesTab";
 
 const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 const hasValidClerkKey = Boolean(
@@ -171,7 +172,7 @@ export default function WorkspaceShell({
               <div className="grow"></div>
               <div className="flex justify-center gap-2">
                 <input
-                  className="flex-1 rounded-3xl border px-3 py-2 mb-2 shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-2xl"
+                  className="flex-1 rounded-3xl border px-3 py-2 mb-2 shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-2xl overflow-wrap"
                   placeholder="What's on your mind?"
                 />
                 <button className="rounded-3xl flex gap-2 bg-blue-500 px-4 py-2 mb-2 text-white shadow-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -182,31 +183,7 @@ export default function WorkspaceShell({
           </div>
         )}
 
-        {activeTab === "files" && (
-          <div className="flex flex-col gap-4">
-            <div className="">
-              <h2 className="text-lg font-semibold m-2">Files</h2>
-              <button className="rounded-3xl bg-stone-200 px-4 py-2 text-sm font-medium text-stone-700 shadow-md hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                Upload
-              </button>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
-              {[1, 2, 3, 4, 5, 6].map((n) => (
-                <Card key={n}>
-                  <CardHeader>
-                    <CardTitle>File {n}.txt</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-sm text-muted-foreground">
-                      Uploaded — 12 KB
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </div>
-        )}
+        {activeTab === "files" && <FilesTab workspaceId={id} />}
 
         {activeTab === "clips" && (
           <div>

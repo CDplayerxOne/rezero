@@ -1,17 +1,9 @@
 from fastapi import HTTPException, Request
-from clerk_backend_api import AuthenticateRequestOptions, Clerk
+from clerk_backend_api import AuthenticateRequestOptions
 from .models import User
-import os
 from sqlmodel import Session, select
 from .database import engine
-
-
-clerk = Clerk(
-    bearer_auth=os.getenv("CLERK_SECRET_KEY")
-)
-
-CLERK_SIGNING_SECRET = os.environ.get("CLERK_SIGNING_SECRET")
-
+from .config import clerk 
 
 def get_current_user_clerk(request: Request) -> str:
     try:
@@ -63,7 +55,8 @@ def get_current_user_id(request: Request) -> int | None:
                 )
             return user.id
 
-    except Exception:
+    except Exception as e:
+        print(e)
         raise HTTPException(
             status_code=401,
             detail="Invalid authentication"

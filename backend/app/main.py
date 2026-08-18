@@ -1,23 +1,19 @@
-from typing import Annotated
-from fastapi import Depends, FastAPI, Query, HTTPException, status, Request
+from fastapi import FastAPI  
 from fastapi.middleware.cors import CORSMiddleware
-from .auth import get_current_user_id 
-from .database import create_db_and_tables, SessionDep
+from .database import create_db_and_tables 
 from contextlib import asynccontextmanager
-from .models import Workspace, WorkspaceCreate, User 
-from sqlmodel import select
-from svix.webhooks import Webhook, WebhookVerificationError
-from .auth import clerk, CLERK_SIGNING_SECRET
-
-
+from .routers import users, workspaces, files
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_db_and_tables()
     yield
 
-
 app = FastAPI(title="Rezero API", version="0.1.0", lifespan=lifespan)
+
+app.include_router(users.router, tags=["users"])
+app.include_router(workspaces.router,  tags=["workspaces"])
+app.include_router(files.router, tags=["files"])
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,192 +22,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.get("/workspaces", response_model=list[Workspace])
-def get_workspaces(
-    session: SessionDep, # Dependency injection for the database session
-    user_id: Annotated[int, Depends(get_current_user_id)], # Dependency injection for the user ID
-    offset: int = 0, # Query parameter
-    limit: Annotated[int, Query(le=100)] = 100, # Query parameter with a maximum value of 100
-):
-    # Query the database for workspaces with pagination
-    workspaces = session.exec(select(Workspace).where(Workspace.user_id == user_id).offset(offset).limit(limit)).all()
-    return workspaces
-
-@app.get("/workspaces/{workspace_id}", response_model=Workspace)
-def get_workspace(
-    session: SessionDep,
-    workspace_id: str, # path paremeter for the workspace ID
-    user_id: Annotated[int, Depends(get_current_user_id)]
-):
-    # Query the database for a specific workspace
-    workspace = session.exec(select(Workspace).where(Workspace.public_id == workspace_id)).first()
-    if workspace and workspace.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this workspace")
-    
-    if not workspace:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    return workspace
-
-@app.post("/workspaces", response_model=Workspace)
-def create_workspace(
-    session: SessionDep,
-    workspace: WorkspaceCreate,
-    user_id: Annotated[int, Depends(get_current_user_id)]
-):
-    # Create a new workspace in the database
-    print("user_id:", user_id)
-    workspace_db = Workspace(
-        user_id=user_id,
-        name=workspace.name,
-    )
-
-    print(workspace_db, "workspace_db")
-
-    print(workspace_db, "db_workspace")
-    session.add(workspace_db)
-    session.commit()
-    session.refresh(workspace_db)
-    return workspace_db
-
-@app.delete("/workspaces/{workspace_id}", response_model=Workspace)
-def delete_workspace(
-    session: SessionDep,
-    workspace_id: int,
-    user_id: Annotated[int, Depends(get_current_user_id)]
-):
-    # Delete a specific workspace from the database
-    workspace = session.get(Workspace, workspace_id)
-    if workspace and workspace.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this workspace")
-    
-    if not workspace:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    session.delete(workspace)
-    session.commit()
-    return {"ok": True, "workspace_id": workspace_id}
-
-@app.patch("/workspaces/{workspace_id}", response_model=Workspace)
-def update_workspace(  
-    session: SessionDep,
-    workspace_id: int,
-    workspace: Workspace,
-    user_id: Annotated[int, Depends(get_current_user_id)]
-):
-    # Update a specific workspace in the database
-    db_workspace = session.get(Workspace, workspace_id)
-
-    if db_workspace and db_workspace.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to update this workspace")
-
-    if not db_workspace:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    # converts to a dictionary 
-    workspace_data = workspace.model_dump()
-    for key, value in workspace_data.items():
-        # updates the values of the workspace object with the new values from the request body
-        setattr(db_workspace, key, value)
-    session.add(db_workspace)
-    session.commit()
-    session.refresh(db_workspace)
-    return db_workspace
-
-@app.post("/users", response_model=User)
-async def create_user(
-    session: SessionDep,
-    request: Request,
-):
-    if not CLERK_SIGNING_SECRET:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Signing secret missing from server environment variables."
-        )
-
-    # Extract the required Svix headers
-    headers = request.headers
-    svix_id = headers.get("svix-id")
-    svix_timestamp = headers.get("svix-timestamp")
-    svix_signature = headers.get("svix-signature")
-
-    # Reject if headers are missing
-    if not all([svix_id, svix_timestamp, svix_signature]):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing required Svix cryptographic headers."
-        )
-
-    # Get the raw text payload from the request body
-    body_bytes = await request.body()
-    body_str = body_bytes.decode("utf-8")
-
-    # Verify the webhook signature using Svix's Webhook class
-    try:
-        wh = Webhook(CLERK_SIGNING_SECRET)
-        # Returns the parsed payload as a dictionary if successful
-        payload = wh.verify(body_str, {
-            "svix-id": svix_id,
-            "svix-timestamp": svix_timestamp,
-            "svix-signature": svix_signature
-        }) # type: ignore
-    except WebhookVerificationError as e:
-        print(f"Verification failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid webhook signature payload."
-        )
-
-    # Extract data and process the event type
-    event_type = payload.get("type")
-    event_data = payload.get("data", {})
-
-    if event_type == "user.created":
-        clerk_id = event_data.get("id")
-        # gets primary email address from the event data, if it exists, and falls back to the first email address in the list if not
-        primary_email_id = event_data.get("primary_email_address_id")
-        email_addresses = event_data.get("email_addresses") or []
-        email = None
-
-        for email_address in email_addresses:
-            if email_address.get("id") == primary_email_id:
-                email = email_address.get("email_address")
-                break
-
-        if email is None and email_addresses:
-            email = email_addresses[0].get("email_address")
-
-        username = event_data.get("username")
-
-        if not isinstance(email, str) or not email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Clerk webhook payload did not include a valid email address.",
-            )
-
-         # Create a new user in the database
-        try:
-            user_db = User(
-                clerk_id=clerk_id,
-                email=email,
-                username=username,
-            )
-
-            session.add(user_db)
-            session.commit()
-            session.refresh(user_db)
-            return user_db
-        except Exception as e:
-            print(f"Error creating user: {e}. Deleting user from Clerk")
-            try:
-                # Delete the user from Clerk if database insertion fails
-                clerk.users.delete(user_id=clerk_id)
-            except Exception as delete_error:
-                print(f"Error deleting user from Clerk: {delete_error}")
-                
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error creating user."
-            )
-
 
 @app.get("/health")
 def health_check() -> dict[str, str]:

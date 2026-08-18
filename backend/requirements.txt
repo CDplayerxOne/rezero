@@ -8,3 +8,4 @@ pydantic-settings
 httpx
 clerk-backend-api
 svix
+boto3

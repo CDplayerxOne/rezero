@@ -38,3 +38,21 @@ class Workspace(WorkspaceBase, table=True):
     created_at: str | None = Field(default_factory=lambda: datetime.now().isoformat(), index=True)
     updated_at: str | None = Field(default_factory=lambda: datetime.now().isoformat(), index=True)
     user: User = Relationship(back_populates="workspaces")
+    files: list["File"] = Relationship(back_populates="workspace")
+
+class FileBase(SQLModel):
+    filename: str
+    file_type: str
+
+class FileCreate(FileBase):
+    pass
+
+class File(FileBase, table=True):
+    id: int | None = Field(default=None, primary_key=True, index=True)
+    public_id: uuid.UUID | None = Field(default_factory=uuid.uuid4, unique=True, index=True)
+    workspace_id: int | None = Field(default=None, foreign_key="workspace.id", index=True)
+    filename: str  = Field(index=True)
+    file_type: str  = Field(index=True)
+    created_at: str | None = Field(default_factory=lambda: datetime.now().isoformat(), index=True)
+    updated_at: str | None = Field(default_factory=lambda: datetime.now().isoformat(), index=True)
+    workspace: Workspace = Relationship(back_populates="files")
