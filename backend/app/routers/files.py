@@ -137,6 +137,36 @@ def get_file(
         })  # Add the presigned URL to the file object
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/files/delete/{file_id}", response_model=dict)
+def delete_file(
+    session: SessionDep,
+    file_id: str,
+    user_id: Annotated[int, Depends(get_current_user_id)]
+):
+    file = session.exec(select(File).where(File.public_id == file_id)).first()
+    if file:
+        workspace = session.exec(select(Workspace).where(Workspace.id == file.workspace_id)).first()
+        if workspace and workspace.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Not authorized to delete this file")
+    
+    if not file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        # Delete the file from S3
+        workspace = session.exec(select(Workspace).where(Workspace.id == file.workspace_id)).first()
+        assert workspace is not None
+        file_key = f"{workspace.public_id}/{file.public_id}-{file.filename}"
+        s3_client.delete_object(Bucket=BUCKET_NAME, Key=file_key)
+
+        # Delete the file from the database
+        session.delete(file)
+        session.commit()
+
+        return {"detail": "File deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     
     
     

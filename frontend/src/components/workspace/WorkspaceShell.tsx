@@ -201,7 +201,7 @@ export default function WorkspaceShell({
       ) : null}
 
       {/* Floating notes button top-right */}
-      <div className="fixed right-6 top-6 z-50">
+      <div className="fixed right-6 top-6 z-40">
         <Button variant="outline" onClick={() => setShowNotes((s) => !s)}>
           Notes
         </Button>
