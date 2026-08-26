@@ -144,6 +144,24 @@ export default function FilesTab({ workspaceId }: { workspaceId: string }) {
 
       if (!newFile.ok) throw new Error("Failed to fetch new file details");
 
+      // wait for embedding to be generated before adding the file to the list
+      const res = await fetch(
+        `http://localhost:8000/files/embed/${public_id}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            workspace_id: workspaceId,
+          }),
+        },
+      );
+
+      if (!res.ok)
+        throw new Error("Failed to generate embeddings for the file");
+
       const newFileData = await newFile.json();
       setFiles((prevFiles) => [newFileData, ...prevFiles]);
     } catch (error) {
@@ -205,7 +223,7 @@ export default function FilesTab({ workspaceId }: { workspaceId: string }) {
               key={file.public_id}
               className="border rounded-lg p-4 bg-stone-100 shadow-md hover:shadow-lg transition duration-200 border-gray-300"
             >
-              <div className="font-medium flex w-100 m-2 justify-between items-center">
+              <div className="font-medium flex m-2 justify-between items-center">
                 <p className="shrink h-16 flex items-center line-clamp-2 overflow-hidden text-ellipsis">
                   {file.filename}
                 </p>
