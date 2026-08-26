@@ -5,7 +5,7 @@ from alembic import context
 from dotenv import load_dotenv
 from sqlmodel import SQLModel
 
-from app.models import User, Workspace
+from app.db.models import User, Workspace, File
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 

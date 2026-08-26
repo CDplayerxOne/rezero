@@ -1,8 +1,8 @@
 from fastapi import HTTPException, Request
 from clerk_backend_api import AuthenticateRequestOptions
-from .models import User
+from .db.models import User
 from sqlmodel import Session, select
-from .database import engine
+from .db.database import engine
 from .config import clerk 
 
 def get_current_user_clerk(request: Request) -> str:

@@ -2,8 +2,8 @@ from fastapi import APIRouter, HTTPException, Request, status
 from svix.webhooks import Webhook, WebhookVerificationError
 
 from ..config import CLERK_SIGNING_SECRET, clerk
-from ..database import SessionDep
-from ..models import User
+from ..db.database import SessionDep
+from ..db.models import User
 
 router = APIRouter(tags=["users"])
 

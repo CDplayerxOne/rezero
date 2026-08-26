@@ -1,19 +1,23 @@
-from fastapi import FastAPI  
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .database import create_db_and_tables 
+from .db.database import create_db_and_tables
 from contextlib import asynccontextmanager
-from .routers import users, workspaces, files
+from .routers import users, workspaces, files, chats, messages
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_db_and_tables()
     yield
 
+
 app = FastAPI(title="Rezero API", version="0.1.0", lifespan=lifespan)
 
 app.include_router(users.router, tags=["users"])
-app.include_router(workspaces.router,  tags=["workspaces"])
+app.include_router(workspaces.router, tags=["workspaces"])
 app.include_router(files.router, tags=["files"])
+app.include_router(chats.router, tags=["chats"])
+app.include_router(messages.router, tags=["messages"])
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,7 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
-

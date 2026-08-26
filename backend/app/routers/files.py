@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Body
+from ..services.embeddings import generate_embedding
 from ..auth import get_current_user_id
-from ..database import SessionDep
-from ..models import File, FileCreate, Workspace
+from ..db.database import SessionDep
+from ..db.models import Chunk, File, FileCreate, Workspace
 from typing import Annotated
-from sqlmodel import desc, select
-from ..config import BUCKET_NAME, s3_client, AWS_REGION
+from sqlmodel import col, delete, desc, select
+from ..config import BUCKET_NAME, s3_client 
 
 router = APIRouter(tags=["files"])
 
@@ -161,13 +162,35 @@ def delete_file(
         s3_client.delete_object(Bucket=BUCKET_NAME, Key=file_key)
 
         # Delete the file from the database
+        statement = delete(Chunk).where(col(Chunk.file_id) == file.id)
+        session.exec(statement)
         session.delete(file)
         session.commit()
 
         return {"detail": "File deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-    
-    
-    
+
+@router.post("/files/embed/{file_id}", response_model=dict)
+async def embed_file(
+    session: SessionDep,
+    file_id: str,
+    user_id: Annotated[int, Depends(get_current_user_id)],
+    background_tasks: BackgroundTasks,
+    workspace_id: str = Body(..., embed=True)
+):
+    file = session.exec(select(File).where(File.public_id == file_id)).first()
+    if file:
+        workspace = session.exec(select(Workspace).where(Workspace.id == file.workspace_id)).first()
+        if workspace and workspace.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Not authorized to embed this file")
+
+    if not file:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        # Generate embeddings for the file
+        background_tasks.add_task(generate_embedding, file, workspace_id, chunk_size=500, overlap=50)
+        return {"detail": "File embedded successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

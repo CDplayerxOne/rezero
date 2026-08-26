@@ -1,6 +1,6 @@
 from fastapi import Depends, APIRouter, Query, HTTPException
-from ..models import Workspace, WorkspaceCreate
-from ..database import SessionDep
+from ..db.models import Workspace, WorkspaceCreate
+from ..db.database import SessionDep
 from ..auth import get_current_user_id
 from typing import Annotated
 from sqlmodel import select

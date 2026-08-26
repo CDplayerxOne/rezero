@@ -9,3 +9,6 @@ httpx
 clerk-backend-api
 svix
 boto3
+pymupdf
+google-genai
+pgvector
