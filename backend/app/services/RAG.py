@@ -1,5 +1,5 @@
 from .embeddings import create_embedding
-from ..db.models import Chunk, Message
+from ..db.models import Chat, Chunk, Message
 from ..db.database import engine
 from sqlmodel import Session, desc, select
 from ..config import client
@@ -27,6 +27,38 @@ def get_related_chunks(query: str, workspace_id: int, top_k: int = 5) -> list[Ch
     except Exception as e:
         print(f"Error retrieving related chunks: {e}")
         return []
+
+
+def generate_chat_title(prompt: str, chat_id: int) -> None:
+    """
+    Generate a chat title based on the provided prompt using the Gemini API.
+
+    Args:
+        prompt (str): The input prompt to generate a title for.
+        chat_id (int): The ID of the chat session.
+
+    Returns:
+        None
+    """
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=f"Generate a concise (maximum 5 words) and relevant title for the following prompt: {prompt}",
+        )
+        if not response.text:
+            raise ValueError("No title generated from the API.")
+        with Session(engine) as session:
+            chat_title = response.text.strip()
+            chat = session.get(Chat, chat_id)
+            if chat:
+                chat.name = chat_title
+                session.commit()
+                session.refresh(chat)
+            else:
+                raise ValueError(f"Chat with ID {chat_id} not found.")
+        print(f"Generated chat title: {response.text}")
+    except Exception as e:
+        print(f"Error generating chat title: {e}")
 
 
 async def gemini_response(prompt: str):

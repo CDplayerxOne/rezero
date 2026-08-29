@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Body, Depends
 from pydantic import BaseModel
+
+from services.RAG import generate_chat_title
 from ..auth import get_current_user_id
 from typing import Annotated
 from ..db.models import Chat, Workspace
 from ..db.database import SessionDep
+from sqlmodel import select
 
 router = APIRouter(tags=["chats"])
 
@@ -22,20 +25,39 @@ class ChatCreateRequest(BaseModel):
 
 
 @router.post("/chats/{workspace_id}", response_model=dict)
-def create_chat(
+async def create_chat(
     chat_data: ChatCreateRequest,
     workspace_id: int,
     session: SessionDep,
-    # user_id: Annotated[int, Depends(get_current_user_id)],
+    user_id: Annotated[int, Depends(get_current_user_id)],
+    background_tasks: BackgroundTasks,
+    prompt: str = Body(),
 ):
+    try:
+        workspace = session.exec(
+            select(Workspace).where(Workspace.id == workspace_id)
+        ).first()
 
-    workspace = session.get(Workspace, workspace_id)
-    if not workspace:
-        return {"error": "Workspace not found"}
+        if not workspace:
+            return {"error": "Workspace not found"}
 
-    chat = Chat(workspace_id=workspace_id, name=chat_data.name)
-    session.add(chat)
-    session.commit()
-    session.refresh(chat)
+        if workspace.user_id != user_id:
+            return {
+                "error": "You do not have permission to create a chat in this workspace"
+            }
 
-    return {"chat_id": chat.id}
+        chat = Chat(workspace_id=workspace_id, name=chat_data.name)
+        session.add(chat)
+        session.commit()
+        session.refresh(chat)
+        if chat.id is None:
+            return {"error": "Failed to create chat"}
+        background_tasks.add_task(generate_chat_title, prompt, chat.id)
+
+        return {
+            "chat_id": chat.id,
+            "name": chat.name,
+            "workspace_id": chat.workspace_id,
+        }
+    except Exception as e:
+        return {"error": str(e)}
