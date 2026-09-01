@@ -107,6 +107,7 @@ export default function WorkspaceShell({
           </div>
         </div>
 
+        {/* sidebar */}
         <nav className="flex flex-col gap-2">
           <button
             className={`w-full flex gap-2 hover:cursor-pointer rounded-lg px-3 py-2 text-left ${activeTab === "chat" ? "bg-stone-200 text-blue-500 font-bold" : "hover:bg-stone-200"}`}

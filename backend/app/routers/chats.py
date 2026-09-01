@@ -1,7 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Body, Depends
 from pydantic import BaseModel
 
-from services.RAG import generate_chat_title
+from ..services.RAG import generate_chat_title
 from ..auth import get_current_user_id
 from typing import Annotated
 from ..db.models import Chat, Workspace

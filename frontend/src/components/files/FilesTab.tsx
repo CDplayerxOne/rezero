@@ -1,24 +1,72 @@
 "use client";
 
 import { Trash2 } from "lucide-react";
-import { useState, ChangeEvent, useEffect } from "react";
+import { useState, ChangeEvent } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Modal from "../ui/Modal";
 
+type FileItem = {
+  filename: string;
+  file_type: string;
+  url: string;
+  public_id: string;
+};
+
+const fetchFiles = async (workspaceId: string): Promise<FileItem[]> => {
+  const response = await fetch(
+    `http://localhost:8000/files/workspace/${workspaceId}?page=1&limit=10`,
+    {
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch files");
+  }
+
+  return response.json();
+};
+
 export default function FilesTab({ workspaceId }: { workspaceId: string }) {
+  const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [files, setFiles] = useState<
-    Array<{
-      filename: string;
-      file_type: string;
-      url: string;
-      public_id: string;
-    }>
-  >([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<string | null>(null);
+
+  const { data: files = [], isLoading } = useQuery({
+    queryKey: ["files", workspaceId],
+    queryFn: () => fetchFiles(workspaceId),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (public_id: string) => {
+      const response = await fetch(
+        `http://localhost:8000/files/delete/${public_id}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to delete file");
+      }
+    },
+    onSuccess: (_, public_id) => {
+      queryClient.setQueryData<FileItem[]>(
+        ["files", workspaceId],
+        (prev = []) => prev.filter((f) => f.public_id !== public_id),
+      );
+      queryClient.invalidateQueries({ queryKey: ["files", workspaceId] });
+      setIsModalOpen(false);
+    },
+  });
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -41,24 +89,7 @@ export default function FilesTab({ workspaceId }: { workspaceId: string }) {
     if (!public_id) return;
     setDeleting(true);
     try {
-      const response = await fetch(
-        `http://localhost:8000/files/delete/${public_id}`,
-        {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          credentials: "include",
-        },
-      );
-
-      if (!response.ok) throw new Error("Failed to delete file");
-
-      // Remove the deleted file from the list
-      setFiles((prevFiles) =>
-        prevFiles.filter((f) => f.public_id !== public_id),
-      );
-      setIsModalOpen(false);
+      await deleteMutation.mutateAsync(public_id);
     } catch (error) {
       console.error("Delete error:", error);
       alert("Delete failed");
@@ -67,35 +98,12 @@ export default function FilesTab({ workspaceId }: { workspaceId: string }) {
     }
   };
 
-  useEffect(() => {
-    const fetchFiles = async () => {
-      try {
-        const response = await fetch(
-          `http://localhost:8000/files/workspace/${workspaceId}?page=1&limit=10`,
-          {
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-          },
-        );
-        const data = await response.json();
-        setLoading(false);
-        setFiles(data);
-      } catch (error) {
-        console.error("Error fetching files:", error);
-        alert("Failed to fetch files");
-      }
-    };
-
-    fetchFiles();
-  }, [workspaceId]);
-
   const handleUpload = async () => {
     if (!file) return;
 
     setUploading(true);
 
     try {
-      // Request presigned URL from FastAPI
       const response = await fetch(
         `http://localhost:8000/files/upload/${workspaceId}`,
         {
@@ -114,13 +122,11 @@ export default function FilesTab({ workspaceId }: { workspaceId: string }) {
       if (!response.ok) throw new Error("Failed to get presigned URL");
 
       const { url, public_id } = await response.json();
-      console.log("url", url);
 
-      // Upload file directly to Amazon S3
       const s3Response = await fetch(url, {
         method: "PUT",
         headers: {
-          "Content-Type": file.type, // MUST match the type sent to FastAPI
+          "Content-Type": file.type,
         },
         body: file,
       });
@@ -129,9 +135,6 @@ export default function FilesTab({ workspaceId }: { workspaceId: string }) {
         throw new Error("Failed to upload file to S3");
       }
 
-      console.log("File uploaded successfully to S3");
-
-      // Refresh the file list after successful upload
       const newFile = await fetch(
         `http://localhost:8000/files/get/${public_id}`,
         {
@@ -144,7 +147,6 @@ export default function FilesTab({ workspaceId }: { workspaceId: string }) {
 
       if (!newFile.ok) throw new Error("Failed to fetch new file details");
 
-      // wait for embedding to be generated before adding the file to the list
       const res = await fetch(
         `http://localhost:8000/files/embed/${public_id}`,
         {
@@ -163,7 +165,16 @@ export default function FilesTab({ workspaceId }: { workspaceId: string }) {
         throw new Error("Failed to generate embeddings for the file");
 
       const newFileData = await newFile.json();
-      setFiles((prevFiles) => [newFileData, ...prevFiles]);
+
+      queryClient.setQueryData<FileItem[]>(
+        ["files", workspaceId],
+        (prev = []) => [newFileData, ...prev],
+      );
+      queryClient.invalidateQueries({ queryKey: ["files", workspaceId] });
+      setFile(null);
+      const input =
+        document.querySelector<HTMLInputElement>("input[type='file']");
+      if (input) input.value = "";
     } catch (error) {
       console.error("Upload error:", error);
       alert("Upload failed");
@@ -216,7 +227,7 @@ export default function FilesTab({ workspaceId }: { workspaceId: string }) {
             Upload File
           </button>
         </form>
-        {loading && <p>Loading files...</p>}
+        {isLoading && <p>Loading files...</p>}
         <div className="grid grid-cols-3 gap-4">
           {files.map((file) => (
             <div
