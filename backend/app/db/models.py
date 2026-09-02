@@ -119,6 +119,9 @@ class ChatCreate(ChatBase):
 class Chat(ChatBase, table=True):
     id: int | None = Field(default=None, primary_key=True, index=True)
     workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    public_id: uuid.UUID | None = Field(
+        default_factory=uuid.uuid4, unique=True, index=True
+    )
     name: str = Field(index=True)
     created_at: str | None = Field(
         default_factory=lambda: datetime.now().isoformat(), index=True
@@ -142,6 +145,9 @@ class MessageCreate(MessageBase):
 
 class Message(MessageBase, table=True):
     id: int | None = Field(default=None, primary_key=True, index=True)
+    public_id: uuid.UUID | None = Field(
+        default_factory=uuid.uuid4, unique=True, index=True
+    )
     chat_id: int = Field(foreign_key="chat.id", index=True)
     role: str = Field(index=True)
     content: str

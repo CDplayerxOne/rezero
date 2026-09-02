@@ -12,12 +12,40 @@ router = APIRouter(tags=["chats"])
 
 
 # test of get_related_chunks function
-@router.get("/chats/{workspace_id}", response_model=dict)
+@router.get("/chats/{workspace_id}/test", response_model=dict)
 def get_related_chunks_endpoint(workspace_id: int, query: str, top_k: int = 5):
     from ..services.RAG import get_related_chunks
 
     chunks = get_related_chunks(query, workspace_id, top_k)
     return {"chunks": [chunk.content for chunk in chunks]}
+
+
+@router.get("/chats/{workspace_id}", response_model=dict)
+def get_chats(
+    workspace_id: int,
+    session: SessionDep,
+    user_id: Annotated[int, Depends(get_current_user_id)],
+):
+    try:
+        workspace = session.exec(
+            select(Workspace).where(Workspace.id == workspace_id)
+        ).first()
+
+        if not workspace:
+            return {"error": "Workspace not found"}
+
+        if workspace.user_id != user_id:
+            return {
+                "error": "You do not have permission to view chats in this workspace"
+            }
+
+        chats = session.exec(
+            select(Chat).where(Chat.workspace_id == workspace_id)
+        ).all()
+
+        return {"chats": [{"id": chat.public_id, "name": chat.name} for chat in chats]}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 class ChatCreateRequest(BaseModel):

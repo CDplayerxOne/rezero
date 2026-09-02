@@ -2,7 +2,7 @@ from typing import Annotated
 from pydantic import BaseModel
 from sqlmodel import select
 from ..db.database import SessionDep
-from ..db.models import Workspace
+from ..db.models import Chat, Workspace
 from ..auth import get_current_user_id
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -50,10 +50,16 @@ async def handle_message(
                 raise ValueError(
                     "Invalid workspace_id or user does not have access to this workspace."
                 )
+        chat = session.exec(
+            select(Chat).where(Chat.public_id == message_request.chat_id)
+        ).first()
+
+        if chat is None or chat.id is None:
+            raise ValueError(f"Chat with ID {message_request.chat_id} not found.")
 
         response_generator = handle_prompt(
             message_request.prompt,
-            message_request.chat_id,
+            chat.id,
             message_request.role,
             message_request.context,
             message_request.workspace_id,
