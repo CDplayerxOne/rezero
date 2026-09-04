@@ -144,14 +144,14 @@ class MessageCreate(MessageBase):
 
 
 class Message(MessageBase, table=True):
-    id: int | None = Field(default=None, primary_key=True, index=True)
+    id: int = Field(default=None, primary_key=True, index=True)
     public_id: uuid.UUID | None = Field(
         default_factory=uuid.uuid4, unique=True, index=True
     )
     chat_id: int = Field(foreign_key="chat.id", index=True)
     role: str = Field(index=True)
     content: str
-    created_at: str | None = Field(
+    created_at: str = Field(
         default_factory=lambda: datetime.now().isoformat(), index=True
     )
     chat: Chat = Relationship(back_populates="messages")

@@ -1,9 +1,21 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  InfiniteData,
+  useInfiniteQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { SendHorizontal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { readSSE } from "@/lib/utils";
 
 const markdownClassNames = {
   p: ({ children }: { children?: ReactNode }) => (
@@ -55,35 +67,13 @@ type MessageItem = {
   createdAt: string;
 };
 
-const buildMockMessages = (
-  workspaceId: string,
-  chatId: string | undefined,
-): MessageItem[] => {
-  const suffix = `${workspaceId}:${chatId ?? "new-chat"}`;
+interface MessageResponse {
+  messages: MessageItem[];
+  has_more: boolean;
+  last_message_id?: string;
+}
 
-  return [
-    {
-      id: `${suffix}-1`,
-      role: "assistant",
-      content:
-        "Hi! I’m ready to help with this workspace. Upload files, ask questions, and I’ll keep the context grounded in your project.",
-      createdAt: "9:41 AM",
-    },
-    {
-      id: `${suffix}-2`,
-      role: "user",
-      content: "Summarize the latest notes for this workspace.",
-      createdAt: "9:42 AM",
-    },
-    {
-      id: `${suffix}-3`,
-      role: "assistant",
-      content:
-        "The latest updates are centered on product planning, file uploads, and workspace navigation. I can synthesize the key decisions once those artifacts are in the workspace.",
-      createdAt: "9:42 AM",
-    },
-  ];
-};
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export function MessageList({
   workspaceId,
@@ -93,21 +83,315 @@ export function MessageList({
   chatId?: string;
 }) {
   const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const initialPromptHandled = useRef(false);
+  const workspacePath = `/workspace/${workspaceId}`;
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isInitialScrollDone = useRef(false);
+  const previousPageCount = useRef(0);
 
-  const { data: messages = [] } = useQuery({
-    queryKey: ["messages", workspaceId, chatId],
-    queryFn: () => buildMockMessages(workspaceId, chatId),
-    staleTime: 60 * 1000,
-  });
+  const queryClient = useQueryClient();
 
-  const handleSend = () => {
-    if (!draft.trim()) return;
-    setDraft("");
+  const fetchMessages = async ({
+    pageParam,
+  }: {
+    pageParam: string | null;
+  }): Promise<MessageResponse> => {
+    const params = new URLSearchParams({
+      workspace_id: workspaceId,
+      chat_id: chatId ?? "",
+      limit: "50",
+    });
+    if (pageParam) params.set("before", pageParam);
+
+    const response = await fetch(`${apiUrl}/messages?${params}`, {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error("Failed to fetch messages");
+    }
+    const page = await response.json();
+    return {
+      ...page,
+      messages: page.messages.map(
+        (message: {
+          id: string;
+          role: MessageRole;
+          content: string;
+          created_at: string;
+        }) => ({
+          ...message,
+          createdAt: message.created_at,
+        }),
+      ),
+    };
   };
+
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useInfiniteQuery({
+      queryKey: ["messages", workspaceId, chatId],
+      queryFn: fetchMessages,
+      initialPageParam: null,
+      enabled: Boolean(chatId),
+      getNextPageParam: (lastPage) => {
+        return lastPage.has_more ? lastPage.last_message_id : undefined;
+      },
+    });
+
+  // The UI will still update even though we are not using react state since this component updates whenever cache
+  const messages =
+    data?.pages
+      .slice()
+      .reverse()
+      .flatMap((page) => page.messages.slice().reverse()) ?? [];
+
+  // we use the useCallback hook to memoize the onEvent function and prevent unnecessary re-renders
+  // we use it because onEvent is used in handleSend and we don't want to trigger the function on every render
+  const onEvent = useCallback(
+    (event: string, data: string, message_id: string, response_id: string) => {
+      if (event === "message") {
+        queryClient.setQueryData(
+          ["messages", workspaceId, chatId],
+          (oldData: InfiniteData<MessageResponse>) => {
+            return {
+              ...oldData,
+              pages: oldData.pages.map((page: MessageResponse) => {
+                return {
+                  ...page,
+                  messages: page.messages.map((msg: MessageItem) => {
+                    if (msg.id === response_id) {
+                      return { ...msg, content: msg.content + data };
+                    }
+                    return msg;
+                  }),
+                };
+              }),
+            };
+          },
+        );
+      }
+
+      if (event === "close") {
+        const parsedData = JSON.parse(data);
+        const {
+          user_message_id,
+          response_message_id,
+          user_message_created_at,
+          response_message_created_at,
+        } = parsedData;
+        queryClient.setQueryData(
+          ["messages", workspaceId, chatId],
+          (oldData: InfiniteData<MessageResponse>) => {
+            return {
+              ...oldData,
+              pages: oldData.pages.map((page: MessageResponse) => {
+                return {
+                  ...page,
+                  messages: page.messages.map((msg: MessageItem) => {
+                    if (msg.id === message_id) {
+                      return {
+                        ...msg,
+                        createdAt: user_message_created_at,
+                        id: user_message_id,
+                      };
+                    }
+                    if (msg.id === response_id) {
+                      return {
+                        ...msg,
+                        createdAt: response_message_created_at,
+                        id: response_message_id,
+                      };
+                    }
+                    return msg;
+                  }),
+                };
+              }),
+            };
+          },
+        );
+      }
+    },
+    [chatId, queryClient, workspaceId],
+  );
+
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container || !data || data.pages.length === 0) return;
+
+    // Scroll to the bottom only on the initial load or when new messages are added
+    if (!isInitialScrollDone.current) {
+      container.scrollTop = container.scrollHeight;
+      isInitialScrollDone.current = true;
+      previousPageCount.current = data.pages.length;
+      return;
+    }
+
+    // Scroll to the bottom only if new pages are added
+    if (data.pages.length > previousPageCount.current) {
+      const heightBefore = container.scrollHeight;
+      requestAnimationFrame(() => {
+        container.scrollTop += container.scrollHeight - heightBefore;
+      });
+      previousPageCount.current = data.pages.length;
+    }
+  }, [data]);
+
+  const handleMessagesScroll = async () => {
+    const container = messagesContainerRef.current;
+    // If the user has scrolled down more than 100px, or if there are no more pages to fetch, or if we're already fetching the next page, we don't want to fetch more messages.
+    if (
+      !container ||
+      container.scrollTop > 100 ||
+      !hasNextPage ||
+      isFetchingNextPage
+    ) {
+      return;
+    }
+
+    await fetchNextPage();
+  };
+
+  // useCallback to memoize the handleSend function and prevent unnecessary re-renders
+  // we use it because handleSend is used in useEffect and we don't want to trigger the effect on every render
+  const handleSend = useCallback(
+    async (prompt = draft) => {
+      if (!prompt.trim()) return;
+      const draft_copy = prompt;
+      setDraft("");
+      setLoading(true);
+
+      try {
+        if (!chatId) {
+          const createResponse = await fetch(`${apiUrl}/chats/${workspaceId}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              name: "New Chat",
+              prompt: draft_copy,
+            }),
+          });
+
+          if (!createResponse.ok) {
+            throw new Error("Failed to create chat");
+          }
+
+          const createdChat = await createResponse.json();
+          if (!createdChat.chat_id) {
+            throw new Error("Chat creation did not return a chat ID");
+          }
+
+          await queryClient.invalidateQueries({
+            queryKey: ["workspace", workspaceId, "recent-chats"],
+          });
+          router.push(
+            `${workspacePath}/${createdChat.chat_id}?prompt=${encodeURIComponent(draft_copy)}`,
+          );
+          return;
+        }
+
+        const response = await fetch(`${apiUrl}/messages`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            chat_id: chatId,
+            workspace_id: workspaceId,
+            prompt: draft_copy,
+          }),
+        });
+        if (!response.body) {
+          throw new Error("No response body");
+        }
+        const temp_user_message = {
+          id: crypto.randomUUID(),
+          role: "user",
+          content: draft_copy,
+          createdAt: new Date().toISOString(),
+        };
+        const temp_response_message = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "",
+          createdAt: new Date().toISOString(),
+        };
+        queryClient.setQueryData(
+          ["messages", workspaceId, chatId],
+          (oldData: InfiniteData<MessageResponse> | undefined) => {
+            // If oldData is undefined, we initialize it with a default structure to ensure that the pages array is always defined. This prevents potential runtime errors when we try to access or modify the pages array later in the function.
+            const pages = oldData?.pages ?? [
+              {
+                messages: [],
+                has_more: false,
+                last_message_id: undefined,
+              },
+            ];
+
+            return {
+              ...oldData,
+              pageParams: oldData?.pageParams ?? [null],
+              pages: pages.map((page: MessageResponse, index) => {
+                if (index === 0) {
+                  return {
+                    ...page,
+                    messages: [
+                      temp_response_message,
+                      temp_user_message,
+                      ...page.messages,
+                    ],
+                  };
+                }
+                return page;
+              }),
+            };
+          },
+        );
+        await readSSE(
+          response,
+          temp_user_message.id,
+          temp_response_message.id,
+          onEvent,
+        );
+      } catch (error) {
+        console.error("Error sending message:", error);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [chatId, draft, onEvent, queryClient, router, workspaceId, workspacePath],
+  );
+
+  useEffect(() => {
+    const initialPrompt = searchParams.get("prompt");
+    if (!chatId || !initialPrompt || initialPromptHandled.current) return;
+
+    initialPromptHandled.current = true;
+    // basically we don't care about the returned promise, we just want to call the function and let it run
+    void handleSend(initialPrompt);
+    router.replace(pathname);
+  }, [chatId, handleSend, pathname, router, searchParams]);
+  // functions need to be in the dependency array to prevent stale closures, but we don't want to trigger the effect on every render, so we use useCallback to memoize them
+  // Stale Closures: https://react.dev/learn/stale-closures
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex-1 space-y-5 overflow-y-auto pb-4">
+      <div
+        ref={messagesContainerRef}
+        onScroll={handleMessagesScroll}
+        className="flex-1 space-y-5 overflow-y-auto pb-4"
+      >
+        {isFetchingNextPage && (
+          <p className="py-2 text-center text-xs text-muted-foreground">
+            Loading older messages...
+          </p>
+        )}
         {messages.map((message) => {
           const isUser = message.role === "user";
 
@@ -153,7 +437,8 @@ export function MessageList({
         />
         <button
           type="button"
-          onClick={handleSend}
+          onClick={() => void handleSend()}
+          disabled={!draft.trim() || loading}
           className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-blue-500 text-white shadow-md transition hover:bg-blue-600"
         >
           <SendHorizontal size={18} />

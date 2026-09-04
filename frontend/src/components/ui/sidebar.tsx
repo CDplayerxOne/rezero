@@ -44,7 +44,6 @@ const fetchWorkspaces = async (): Promise<WorkspaceItem[]> => {
     headers: { "Content-Type": "application/json" },
     credentials: "include",
   });
-
   if (!response.ok) {
     throw new Error("Failed to fetch workspaces");
   }
@@ -55,14 +54,15 @@ const fetchWorkspaces = async (): Promise<WorkspaceItem[]> => {
 const fetchRecentChats = async (
   workspaceId: string,
 ): Promise<RecentChatItem[]> => {
-  const response = await fetch(`${apiUrl}/chats/${workspaceId}/recent`, {
+  const response = await fetch(`${apiUrl}/chats/${workspaceId}`, {
     headers: { "Content-Type": "application/json" },
     credentials: "include",
   });
   if (!response.ok) {
     throw new Error("Failed to fetch recent chats");
   }
-  return response.json();
+  const data: { chats?: RecentChatItem[] } = await response.json();
+  return Array.isArray(data.chats) ? data.chats : [];
 };
 
 export function Sidebar({
@@ -212,6 +212,7 @@ export function Sidebar({
         <h2 className="font-semibold m-2">Recent Chats</h2>
         {recentChats.map((chat) => {
           const isActive = activeChatId === chat.id;
+          console.log(chat);
 
           return (
             <button

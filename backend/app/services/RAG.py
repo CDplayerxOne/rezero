@@ -1,5 +1,7 @@
+import json
+
 from .embeddings import create_embedding
-from ..db.models import Chat, Chunk, Message
+from ..db.models import Chat, Chunk, Message, MessageCreate
 from ..db.database import engine
 from sqlmodel import Session, desc, select
 from ..config import client
@@ -102,7 +104,7 @@ async def handle_prompt(
         workspace_id (int | None): The ID of the workspace to search within (default is None).
     """
     try:
-        user_message = Message(
+        user_message = MessageCreate(
             chat_id=chat_id,
             role=role,
             content=prompt,
@@ -145,17 +147,28 @@ async def handle_prompt(
         response = ""
         async for response_text in gemini_response(prompt):
             response += response_text
-            yield response_text
+            yield f"data: {response_text}\n\n"
 
-        response_message = Message(
+        response_message = MessageCreate(
             chat_id=chat_id,
             role="assistant",
             content=response,
         )
         with Session(engine) as session:
-            session.add_all([user_message, response_message])
+            db_user_message = Message.model_validate(user_message)
+            db_response_message = Message.model_validate(response_message)
+            session.add_all([db_user_message, db_response_message])
             session.commit()
-            session.refresh(user_message)
-            session.refresh(response_message)
+            session.refresh(db_user_message)
+            session.refresh(db_response_message)
+
+        closing_data = {
+            "user_message_id": str(db_user_message.public_id),
+            "user_message_created_at": db_user_message.created_at,
+            "response_message_id": str(db_response_message.public_id),
+            "response_message_created_at": db_response_message.created_at,
+        }
+
+        yield f"event: close\ndata: {json.dumps(closing_data)}\n\n"
     except Exception as e:
         print(f"Error handling prompt: {e}")

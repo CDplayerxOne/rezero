@@ -1,12 +1,13 @@
-from fastapi import APIRouter, BackgroundTasks, Body, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
+from uuid import UUID
 
 from ..services.RAG import generate_chat_title
 from ..auth import get_current_user_id
 from typing import Annotated
 from ..db.models import Chat, Workspace
 from ..db.database import SessionDep
-from sqlmodel import select
+from sqlmodel import desc, select
 
 router = APIRouter(tags=["chats"])
 
@@ -22,13 +23,13 @@ def get_related_chunks_endpoint(workspace_id: int, query: str, top_k: int = 5):
 
 @router.get("/chats/{workspace_id}", response_model=dict)
 def get_chats(
-    workspace_id: int,
+    workspace_id: str,
     session: SessionDep,
     user_id: Annotated[int, Depends(get_current_user_id)],
 ):
     try:
         workspace = session.exec(
-            select(Workspace).where(Workspace.id == workspace_id)
+            select(Workspace).where(Workspace.public_id == workspace_id)
         ).first()
 
         if not workspace:
@@ -40,7 +41,9 @@ def get_chats(
             }
 
         chats = session.exec(
-            select(Chat).where(Chat.workspace_id == workspace_id)
+            select(Chat)
+            .where(Chat.workspace_id == workspace.id)
+            .order_by(desc(Chat.created_at))
         ).all()
 
         return {"chats": [{"id": chat.public_id, "name": chat.name} for chat in chats]}
@@ -50,42 +53,40 @@ def get_chats(
 
 class ChatCreateRequest(BaseModel):
     name: str
+    prompt: str | None = None
 
 
 @router.post("/chats/{workspace_id}", response_model=dict)
 async def create_chat(
     chat_data: ChatCreateRequest,
-    workspace_id: int,
+    workspace_id: UUID,
     session: SessionDep,
     user_id: Annotated[int, Depends(get_current_user_id)],
     background_tasks: BackgroundTasks,
-    prompt: str = Body(),
 ):
-    try:
-        workspace = session.exec(
-            select(Workspace).where(Workspace.id == workspace_id)
-        ).first()
+    workspace = session.exec(
+        select(Workspace).where(
+            Workspace.public_id == workspace_id,
+            Workspace.user_id == user_id,
+        )
+    ).first()
 
-        if not workspace:
-            return {"error": "Workspace not found"}
+    if workspace is None or workspace.id is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
 
-        if workspace.user_id != user_id:
-            return {
-                "error": "You do not have permission to create a chat in this workspace"
-            }
+    chat = Chat(workspace_id=workspace.id, name=chat_data.name)
+    session.add(chat)
+    session.commit()
+    session.refresh(chat)
 
-        chat = Chat(workspace_id=workspace_id, name=chat_data.name)
-        session.add(chat)
-        session.commit()
-        session.refresh(chat)
-        if chat.id is None:
-            return {"error": "Failed to create chat"}
-        background_tasks.add_task(generate_chat_title, prompt, chat.id)
+    if chat.id is None or chat.public_id is None:
+        raise HTTPException(status_code=500, detail="Failed to create chat")
 
-        return {
-            "chat_id": chat.id,
-            "name": chat.name,
-            "workspace_id": chat.workspace_id,
-        }
-    except Exception as e:
-        return {"error": str(e)}
+    if chat_data.prompt:
+        background_tasks.add_task(generate_chat_title, chat_data.prompt, chat.id)
+
+    return {
+        "chat_id": str(chat.public_id),
+        "name": chat.name,
+        "workspace_id": str(workspace.public_id),
+    }
