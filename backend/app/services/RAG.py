@@ -90,7 +90,7 @@ async def handle_prompt(
     prompt: str,
     chat_id: int,
     role: str = "user",
-    context: bool = False,
+    context: bool = True,
     workspace_id: int | None = None,
 ):
     """
@@ -123,7 +123,7 @@ async def handle_prompt(
             last_messages_text = "\n".join(
                 [f"{msg.role}: {msg.content}" for msg in reversed(last_messages)]
             )
-            if last_messages_text:
+            if len(last_messages_text) > 0:
                 context_text += "Last messages:\n"
                 context_text += last_messages_text
         if context:
@@ -136,7 +136,7 @@ async def handle_prompt(
                         for i, chunk in enumerate(related_chunks)
                     ]
                 )
-                if len(context_text) > 0:
+                if len(related_chunks_text) > 0:
                     context_text += "Related chunks:\n"
                     context_text += related_chunks_text
 

@@ -5,6 +5,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function getStreamingMarkdown(content: string, isStreaming: boolean) {
+  if (!isStreaming) return content;
+
+  // Count the number of fenced code blocks in the content
+  const fences = content.match(/(^|\n)\s*```/g) ?? [];
+
+  // Close an unfinished fenced code block for rendering purposes.
+  return fences.length % 2 === 1 ? `${content}\n\n\`\`\`` : content;
+}
+
 const parseSSE = (
   data: string,
   message_id: string,

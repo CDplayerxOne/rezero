@@ -83,7 +83,9 @@ def get_messages(
         ],
         "has_more": len(messages) > limit,
         "last_message_id": (
-            str(messages[limit - 1].public_id) if messages[:limit] else None
+            str(messages[limit - 1].public_id)
+            if len(messages) >= limit
+            else str(messages[-1].public_id) if messages else None
         ),
     }
 

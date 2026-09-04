@@ -15,7 +15,7 @@ import {
 } from "@tanstack/react-query";
 import { SendHorizontal } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { readSSE } from "@/lib/utils";
+import { readSSE, getStreamingMarkdown } from "@/lib/utils";
 
 const markdownClassNames = {
   p: ({ children }: { children?: ReactNode }) => (
@@ -84,14 +84,18 @@ export function MessageList({
 }) {
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingId, setStreamingId] = useState<string | null>(null);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const initialPromptHandled = useRef(false);
   const workspacePath = `/workspace/${workspaceId}`;
+
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isInitialScrollDone = useRef(false);
   const previousPageCount = useRef(0);
+  const shouldAutoScroll = useRef(false);
 
   const queryClient = useQueryClient();
 
@@ -221,7 +225,7 @@ export function MessageList({
     const container = messagesContainerRef.current;
     if (!container || !data || data.pages.length === 0) return;
 
-    // Scroll to the bottom only on the initial load or when new messages are added
+    // Scroll to the bottom only on the initial load
     if (!isInitialScrollDone.current) {
       container.scrollTop = container.scrollHeight;
       isInitialScrollDone.current = true;
@@ -229,25 +233,37 @@ export function MessageList({
       return;
     }
 
-    // Scroll to the bottom only if new pages are added
+    // Preserve the viewport when older messages are prepended.
     if (data.pages.length > previousPageCount.current) {
       const heightBefore = container.scrollHeight;
       requestAnimationFrame(() => {
         container.scrollTop += container.scrollHeight - heightBefore;
       });
       previousPageCount.current = data.pages.length;
+      return;
+    }
+
+    // Follow newly sent messages and streamed response chunks.
+    if (shouldAutoScroll.current) {
+      requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+      });
     }
   }, [data]);
 
   const handleMessagesScroll = async () => {
     const container = messagesContainerRef.current;
-    // If the user has scrolled down more than 100px, or if there are no more pages to fetch, or if we're already fetching the next page, we don't want to fetch more messages.
-    if (
-      !container ||
-      container.scrollTop > 100 ||
-      !hasNextPage ||
-      isFetchingNextPage
-    ) {
+    if (!container) return;
+
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom > 100) {
+      shouldAutoScroll.current = false;
+    }
+
+    // If the user is away from the top, or if there are no more pages to fetch,
+    // or if we're already fetching the next page, don't fetch older messages.
+    if (container.scrollTop > 100 || !hasNextPage || isFetchingNextPage) {
       return;
     }
 
@@ -322,6 +338,7 @@ export function MessageList({
           content: "",
           createdAt: new Date().toISOString(),
         };
+        shouldAutoScroll.current = true;
         queryClient.setQueryData(
           ["messages", workspaceId, chatId],
           (oldData: InfiniteData<MessageResponse> | undefined) => {
@@ -353,15 +370,24 @@ export function MessageList({
             };
           },
         );
+        setIsStreaming(true);
+        setStreamingId(temp_response_message.id);
         await readSSE(
           response,
           temp_user_message.id,
           temp_response_message.id,
           onEvent,
         );
+        // necessary to refetch so that the markdown is rendered correctly.
+        await queryClient.refetchQueries({
+          queryKey: ["messages", workspaceId, chatId],
+        });
       } catch (error) {
         console.error("Error sending message:", error);
       } finally {
+        shouldAutoScroll.current = false;
+        setIsStreaming(false);
+        setStreamingId(null);
         setLoading(false);
       }
     },
@@ -412,8 +438,15 @@ export function MessageList({
               ) : (
                 <div className="max-w-3xl text-sm leading-7 text-stone-800">
                   <ReactMarkdown components={markdownClassNames}>
-                    {message.content}
+                    {isStreaming && message.id === streamingId
+                      ? getStreamingMarkdown(message.content, isStreaming)
+                      : message.content}
                   </ReactMarkdown>
+                  {message.id === streamingId && (
+                    <span className="ml-1 inline-block animate-pulse text-stone-400">
+                      ▍
+                    </span>
+                  )}
                 </div>
               )}
             </div>
