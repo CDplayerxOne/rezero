@@ -1,4 +1,4 @@
-# Rezero
+# RE:ZERO
 
 A lightweight, workspace-based AI Interface, RE:ZERO sits in between a chatbot (think ChatGPT, Gemini) and a full-fledged research tool (think Gemini Notebook).
 
